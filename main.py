@@ -45,10 +45,31 @@ def load_yandex_liked_tracks(client):
     return ya
 
 
+def get_tracks_from_playlist(client, playlist_name='VK2YA'):
+    ya_tracks = []
+    for short_track in create_playlist(client, playlist_name).tracks:
+        track = short_track.track
+        ya_tracks.append(
+            {
+                'title': track.title,
+                'artist': ",".join(artist.name for artist in track.artists),
+                'album': track.albums[0].title if track.albums else None,
+                'year': track.albums[0].year if track.albums else None,
+                'genre': track.albums[0].genre if track.albums else None
+            }
+        )
+    ya = pd.DataFrame(ya_tracks)
+    ya.album.fillna('', inplace=True)
+    ya.genre.fillna('', inplace=True)
+    ya.year.fillna(0, inplace=True)
+    ya.year = ya.year.astype(int)
+    return ya
+
+
 def create_playlist(client: Client, name='VK2YA') -> Playlist:
     playlists = {p.title: p for p in client.users_playlists_list()}
     if name in playlists:
-        return client.users_playlists(playlists[name].kind)
+        return client.users_playlists(playlists[name].kind)[0]
     return client.users_playlists_create(name)
 
 
@@ -79,7 +100,7 @@ def main():
 
     # Get Yandex.Music client
     client = get_ya_music_client(args.user)
-    playlist = create_playlist(client)
+    playlist_tracks = get_tracks_from_playlist(client)
 
 
 if __name__ == '__main__':
