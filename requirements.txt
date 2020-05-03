@@ -1,0 +1,2 @@
+yandex_music==0.0.16
+pandas==1.0.3
