@@ -1,0 +1,3 @@
+[submodule "VKMP"]
+	path = VKMP
+	url = git@github.com:solesensei/VKMP.git
