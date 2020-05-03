@@ -1,9 +1,10 @@
 import os
-import sys
-import pandas as pd
 import argparse
 from getpass import getpass
-from yandex_music.client import Client
+
+import pandas as pd
+from yandex_music.client import Client, Playlist, Track
+
 from VKMP import main as vkmp_main
 
 
@@ -44,8 +45,15 @@ def load_yandex_liked_tracks(client):
     return ya
 
 
-def get_ya_music_client(args):
-    login = args.user or input('Yandex login: ')
+def create_playlist(client: Client, name='VK2YA') -> Playlist:
+    playlists = {p.title: p for p in client.users_playlists_list()}
+    if name in playlists:
+        return client.users_playlists(playlists[name].kind)
+    return client.users_playlists_create(name)
+
+
+def get_ya_music_client(user=None) -> Client:
+    login = user or input('Yandex login: ')
     password = getpass('Password / One time password (from Yandex.Key): ')
     return Client.from_credentials(login, password)
 
@@ -70,7 +78,8 @@ def main():
     vk = load_dump_tracks(file)
 
     # Get Yandex.Music client
-    client = get_ya_music_client(args)
+    client = get_ya_music_client(args.user)
+    playlist = create_playlist(client)
 
 
 if __name__ == '__main__':
