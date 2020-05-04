@@ -20,6 +20,8 @@ def usage():
     parser.add_argument('--user', '-u', help='yandex login')
     parser.add_argument('--like', help='like tracks', action='store_true')
     parser.add_argument('--playlist', help='playlist name to create', default='VK2YA')
+    parser.add_argument('--clear', help='clear playlist before import', action='store_true')
+    parser.add_argument('--reverse', help='insert tracks in reversed order', action='store_true')
     parser.add_argument('--no-clear-duplicates', help='do not remove duplicates tracks from playlist', action='store_true')
     parser.add_argument('--prompt', help='manual select multiple choices tracks', action='store_true')
     return parser.parse_args()
@@ -126,6 +128,12 @@ def remove_playlist_duplicates(client: Client, playlist_name='VK2YA') -> Playlis
             break  # recurse
 
 
+def clear_playlist(client: Client, name='VK2YA'):
+    echo.y(f'Clearing playlist: {name}')
+    p = create_playlist(client, name)
+    client.users_playlists_delete_track(p.kind, 0, p.track_count, revision=p.revision)
+
+
 def create_playlist(client: Client, name='VK2YA') -> Playlist:
     playlists = {p.title: p for p in client.users_playlists_list()}
     if name in playlists:
@@ -140,7 +148,7 @@ def get_ya_music_client(user=None) -> Client:
     return Client.from_credentials(login, password)
 
 
-def add_tracks(client: Client, tracks: tp.List[Track], playlist_name=None, like=False):
+def add_tracks(client: Client, tracks: tp.List[Track], playlist_name=None, like=False, reversed_order=False):
     if not tracks:
         echo.y('No tracks to add')
         return set()
@@ -149,7 +157,7 @@ def add_tracks(client: Client, tracks: tp.List[Track], playlist_name=None, like=
 
     p = create_playlist(client, name=playlist_name)
     error_tracks = set()
-    for track in tracks:
+    for track in tracks if reversed_order else reversed(tracks):
         echo.c(f"Insert track: {', '.join(a.name for a in track.artists)} - {track.title} to {playlist_name}", end=' ')
         p = client.users_playlists_insert_track(p.kind, track.id, track.albums[0].id if track.albums else 0, revision=p.revision)
         if p is None:
@@ -206,6 +214,9 @@ def main():
 
     # Get Yandex.Music client
     client = get_ya_music_client(args.user)
+    # Clear playlist
+    if args.clear:
+        clear_playlist(client, name=args.playlist)
     # Get already imported tracks
     ya = get_tracks_from_playlist(client, playlist_name=args.playlist)
 
@@ -227,7 +238,7 @@ def main():
         tracks_to_add.append(track)
 
     # Add tracks to Yandex.Music playlist
-    error_tracks = add_tracks(client, tracks_to_add, playlist_name=args.playlist, like=args.like)
+    error_tracks = add_tracks(client, tracks_to_add, playlist_name=args.playlist, like=args.like, reversed_order=args.reverse)
 
     # Clear duplicates
     if not args.no_clear_duplicates:
