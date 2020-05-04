@@ -10,6 +10,8 @@ pip install -r requirements.txt && pip install -r VKMP/requirements.txt
 
 ## Usage
 
+**Dump format:** csv file `artist,title`
+
 ```bash
 # show help message
 python main.py -h
