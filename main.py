@@ -200,10 +200,9 @@ def main():
         echo.r(f"File {args.file} doesn't exists")
         sys.exit(1)
     elif not args.file:
-        vk_args = vkmp_main.usage()
-        vk_args.csv = True
         echo.y('VKMP Export')
-        vkmp_main.main(vk_args)
+        args.csv = True
+        vkmp_main.main(args)
 
     file = args.file or vkmp_main.DUMP_FILE
     if not os.path.exists(file):
