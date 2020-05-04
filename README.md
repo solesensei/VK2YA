@@ -1,5 +1,5 @@
 # VK2YA
-Simple script to import VK Music to Yandex.Music.
+Simple script to transfer VK Music to Yandex.Music.
 
 ## Setup
 
