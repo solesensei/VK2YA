@@ -5,10 +5,13 @@ import typing as tp
 from getpass import getpass
 
 import pandas as pd
+
 from tqdm import tqdm
 from yandex_music.client import Client, Playlist, Track
 
 from VKMP import main as vkmp_main
+
+from utils import echo, color
 
 
 def usage():
@@ -17,15 +20,16 @@ def usage():
     parser.add_argument('--user', '-u', help='yandex login')
     parser.add_argument('--like', help='like tracks', action='store_true')
     parser.add_argument('--playlist', help='playlist name to create', default='VK2YA')
-    parser.add_argument('--prompt', help='manual select tracks for multiple choices', action='store_true')
+    parser.add_argument('--no-clear-duplicates', help='do not remove duplicates tracks from playlist', action='store_true')
+    parser.add_argument('--prompt', help='manual select multiple choices tracks', action='store_true')
     return parser.parse_args()
 
 
 def load_dump_tracks(path):
-    print(f'Load dump: {path}')
+    echo.c(f'Load dump: ./{path}')
     vk = pd.read_csv(path, usecols=[0, 1])
     vk.columns = ['artist', 'title']
-    return vk
+    return vk.drop_duplicates()
 
 
 def search_track(client: Client, artist: str, title: str, prompt=False) -> tp.Union[None, Track]:
@@ -52,11 +56,9 @@ def search_track(client: Client, artist: str, title: str, prompt=False) -> tp.Un
         r = _search(f'{artist} {title}', results)
     if r is None and prompt:
         for i, r in enumerate(results):
-            print(f"{i}. {', '.join(a.name for a in r.artists) - {r.title}}")
-        a = input("{} - {} [1/n] ".format(artist, title))
-        if not a:
-            return results[0]
-        if not a.isdigit():
+            echo(f"{i}. {', '.join(a.name for a in r.artists)} - {r.title}")
+        a = input(color.y("{} - {} [1/n] defaul: n ".format(artist, title)))
+        if not a or not a.isdigit():
             return None
         a = int(a)
         return results[a] if a < len(results) else None
@@ -77,7 +79,7 @@ def get_yandex_liked_tracks(client):
                 'genre': track.albums[0].genre if track.albums else None
             }
         )
-    ya = pd.DataFrame(ya_tracks)
+    ya = pd.DataFrame(ya_tracks).drop_duplicates()
     ya.album.fillna('', inplace=True)
     ya.genre.fillna('', inplace=True)
     ya.year.fillna(0, inplace=True)
@@ -98,7 +100,7 @@ def get_tracks_from_playlist(client, playlist_name='VK2YA'):
                 'genre': track.albums[0].genre if track.albums else None
             }
         )
-    ya = pd.DataFrame(ya_tracks)
+    ya = pd.DataFrame(ya_tracks, columns=['title', 'artist', 'album', 'year', 'genre']).drop_duplicates()
     ya.album.fillna('', inplace=True)
     ya.genre.fillna('', inplace=True)
     ya.year.fillna(0, inplace=True)
@@ -106,41 +108,79 @@ def get_tracks_from_playlist(client, playlist_name='VK2YA'):
     return ya
 
 
+def remove_playlist_duplicates(client: Client, playlist_name='VK2YA') -> Playlist:
+    echo.c(f'Removing duplicates from playlist: {playlist_name}')
+    p = create_playlist(client, playlist_name)
+    unique_tracks = set()
+    while len(p.tracks) != len(unique_tracks):
+        was_len = len(p.tracks)
+        unique_tracks = set()
+        for i, t in enumerate(p.tracks):
+            if t.id in unique_tracks:
+                echo.y(f'Duplicate found: {t.track.artists[0].name} - {t.track.title}, removing')
+                client.users_playlists_delete_track(p.kind, i, i+1, revision=p.revision)
+                p = create_playlist(client, playlist_name)
+                break
+            unique_tracks.add(t.id)
+        if was_len == len(p.tracks):
+            break  # recurse
+
+
 def create_playlist(client: Client, name='VK2YA') -> Playlist:
     playlists = {p.title: p for p in client.users_playlists_list()}
     if name in playlists:
         return client.users_playlists(playlists[name].kind)[0]
-    print(f'Creating playlist: {name}')
+    echo.g(f'Creating playlist: {name}')
     return client.users_playlists_create(name)
 
 
 def get_ya_music_client(user=None) -> Client:
-    login = user or input('Yandex login: ')
-    password = getpass('Password / One time password (from Yandex.Key): ')
+    login = user or input(color.y('Yandex login: '))
+    password = getpass(color.y('Password / One time password (from Yandex.Key): '))
     return Client.from_credentials(login, password)
 
 
 def add_tracks(client: Client, tracks: tp.List[Track], playlist_name=None, like=False):
-    print(f"Adding tracks to playlist: {playlist_name} {'and like' if like else ''}")
-    kind = create_playlist(client, name=playlist_name).kind
+    if not tracks:
+        echo.y('No tracks to add')
+        return set()
+
+    echo.g(f"Adding tracks to playlist: {playlist_name} {'and like' if like else ''} {len(tracks)}")
+
+    p = create_playlist(client, name=playlist_name)
     error_tracks = set()
     for track in tracks:
-        print(f'Insert track: {track.artist} - {track.title} to {playlist_name}', end=' ')
-        p = client.users_playlists_insert_track(kind, track.id, track.albums[0].id if track.albums else 0)
+        echo.c(f"Insert track: {', '.join(a.name for a in track.artists)} - {track.title} to {playlist_name}", end=' ')
+        p = client.users_playlists_insert_track(p.kind, track.id, track.albums[0].id if track.albums else 0, revision=p.revision)
         if p is None:
-            print('NOT OK')
+            echo.r('NOT OK')
             error_tracks.add(track)
         else:
-            print('OK')
+            echo.g('OK')
         if like:
-            print(f'Like: {track.artist} - {track.title}', end=' ')
+            echo.c(f"Like: {', '.join(a.name for a in track.artists)} - {track.title}", end=' ')
             if not client.users_likes_tracks_add(track.id):
-                print('NOT OK')
+                echo.r('NOT OK')
                 error_tracks.add(track)
             else:
-                print('OK')
-    print('Complete')
+                echo.g('OK')
+    echo.g('Complete!')
     return error_tracks
+
+
+def dump_error_tracks(tracks: tp.List[Track], file='errors.csv'):
+    with open(file, 'w') as f:
+        f.write('artist,title\n')
+        for t in tracks:
+            artists = ', '.join(a.name for a in t.artists)
+            f.write(f'"{artists}","{t.title}"\n')
+
+
+def dump_not_found_tracks(tracks: tp.List[pd.DataFrame], file='not_found.csv'):
+    with open(file, 'w') as f:
+        f.write('artist,title\n')
+        for t in tracks:
+            f.write(f'"{t.artist}","{t.title}"\n')
 
 
 def main():
@@ -149,17 +189,17 @@ def main():
 
     # Load tracks from file or from VKMP
     if args.file and not os.path.exists(args.file):
-        print(f"File {args.file} doesn't exists")
+        echo.r(f"File {args.file} doesn't exists")
         sys.exit(1)
     elif not args.file:
         vk_args = vkmp_main.usage()
         vk_args.csv = True
-        print('VKMP Export')
+        echo.y('VKMP Export')
         vkmp_main.main(vk_args)
 
     file = args.file or vkmp_main.DUMP_FILE
     if not os.path.exists(file):
-        print(f"File {file} doesn't exists")
+        echo.r(f"File {file} doesn't exists")
         sys.exit(1)
 
     vk = load_dump_tracks(file)
@@ -169,18 +209,17 @@ def main():
     # Get already imported tracks
     ya = get_tracks_from_playlist(client, playlist_name=args.playlist)
 
-
     # Get difference between dump tracks and playlist
     new_tracks = vk[~(vk.title.str.lower().isin(ya.title.str.lower()) & vk.artist.str.lower().isin(ya.artist.str.lower()))]
 
-    print(f'Dump tracks: {len(vk)}')
-    print(f'Tracks in playlist {args.playlist}: {len(ya)}')
-    print(f'New tracks to import: {len(new_tracks)}')
+    echo(f"{color.c('Dump tracks:')} {len(vk)}")
+    echo(f"{color.c('Tracks in playlist ' + args.playlist)}: {len(ya)}")
+    echo(f"{color.c('Tracks to import:')} {len(new_tracks)}")
 
     # Search tracks at Yandex.Music
     not_found = []
     tracks_to_add = []
-    for _,t in tqdm(new_tracks.iterrows(), desc='Searching Yandex.Music'):
+    for _, t in tqdm(new_tracks.iterrows(), desc=color.y('Searching Yandex.Music'), total=len(new_tracks)):
         track = search_track(client, t.artist, t.title, prompt=args.prompt)
         if track is None:
             not_found.append(t)
@@ -189,10 +228,18 @@ def main():
 
     # Add tracks to Yandex.Music playlist
     error_tracks = add_tracks(client, tracks_to_add, playlist_name=args.playlist, like=args.like)
-    print('-'*20)
-    print(f'Imported tracks: {len(tracks_to_add) - len(error_tracks)}')
-    print(f'Not imported tracks: {len(error_tracks)}')
 
+    # Clear duplicates
+    if not args.no_clear_duplicates:
+        remove_playlist_duplicates(client, playlist_name=args.playlist)
+
+    dump_not_found_tracks(not_found)
+    dump_error_tracks(error_tracks)
+
+    echo.c('-'*20)
+    echo(f"{color.c('Imported tracks:')} {len(tracks_to_add) - len(error_tracks)}")
+    echo(f"{color.c('Not found tracks:')} {len(not_found)}")
+    echo(f"{color.c('Not imported tracks:')} {len(error_tracks)}")
 
 
 if __name__ == '__main__':
