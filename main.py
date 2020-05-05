@@ -3,15 +3,33 @@ import sys
 import argparse
 import typing as tp
 from getpass import getpass
-
+from dataclasses import dataclass
 import pandas as pd
 
 from tqdm import tqdm
-from yandex_music.client import Client, Playlist, Track
+from yandex_music.client import Client, Playlist, Track as YaTrack
+from yandex_music.exceptions import NetworkError
 
 from VKMP import main as vkmp_main
 
 from utils import echo, color
+
+
+@dataclass
+class Track:
+    artist: str
+    title: str
+    id: int = None
+    album_id: int = None
+
+    @classmethod
+    def from_ya(cls, track: YaTrack):
+        artist = ', '.join(a.name for a in track.artists)
+        return cls(artist, track.title, track.id, track.albums[0].id if track.albums else 0)
+
+    @classmethod
+    def from_pd(cls, track: pd.Series):
+        return cls(track.artist, track.title, track.get('id'), track.get('album_id'))
 
 
 def usage():
@@ -34,7 +52,7 @@ def load_dump_tracks(path):
     return vk.drop_duplicates()
 
 
-def search_track(client: Client, artist: str, title: str, prompt=False) -> tp.Union[None, Track]:
+def search_track(client: Client, artist: str, title: str, prompt=False) -> tp.Union[None, YaTrack]:
 
     def _search(text, results):
         search = client.search(text)
@@ -59,7 +77,7 @@ def search_track(client: Client, artist: str, title: str, prompt=False) -> tp.Un
     if r is None and prompt:
         for i, r in enumerate(results):
             echo(f"{i}. {', '.join(a.name for a in r.artists)} - {r.title}")
-        a = input(color.y("{} - {} [1/n] defaul: n ".format(artist, title)))
+        a = input(color.y('{} - {} [1/n] defaul: n '.format(artist, title)))
         if not a or not a.isdigit():
             return None
         a = int(a)
@@ -75,7 +93,7 @@ def get_yandex_liked_tracks(client):
         ya_tracks.append(
             {
                 'title': track.title,
-                'artist': ",".join(artist.name for artist in track.artists),
+                'artist': ', '.join(artist.name for artist in track.artists),
                 'album': track.albums[0].title if track.albums else None,
                 'year': track.albums[0].year if track.albums else None,
                 'genre': track.albums[0].genre if track.albums else None
@@ -96,7 +114,7 @@ def get_tracks_from_playlist(client, playlist_name='VK2YA'):
         ya_tracks.append(
             {
                 'title': track.title,
-                'artist': ",".join(artist.name for artist in track.artists),
+                'artist': ', '.join(artist.name for artist in track.artists),
                 'album': track.albums[0].title if track.albums else None,
                 'year': track.albums[0].year if track.albums else None,
                 'genre': track.albums[0].genre if track.albums else None
@@ -158,15 +176,20 @@ def add_tracks(client: Client, tracks: tp.List[Track], playlist_name=None, like=
     p = create_playlist(client, name=playlist_name)
     error_tracks = set()
     for track in tracks if reversed_order else reversed(tracks):
-        echo.c(f"Insert track: {', '.join(a.name for a in track.artists)} - {track.title} to {playlist_name}", end=' ')
-        p = client.users_playlists_insert_track(p.kind, track.id, track.albums[0].id if track.albums else 0, revision=p.revision)
+        echo.c(f'Insert track: {track.artist} - {track.title} to {playlist_name}', end=' ')
+        try:
+            p = create_playlist(client, name=playlist_name)
+            p = client.users_playlists_insert_track(p.kind, track.id, track.album_id, revision=p.revision)
+        except NetworkError:
+            p = None
         if p is None:
             echo.r('NOT OK')
+            p = create_playlist(client, name=playlist_name)
             error_tracks.add(track)
         else:
             echo.g('OK')
         if like:
-            echo.c(f"Like: {', '.join(a.name for a in track.artists)} - {track.title}", end=' ')
+            echo.c(f'Like: {track.artist} - {track.title}', end=' ')
             if not client.users_likes_tracks_add(track.id):
                 echo.r('NOT OK')
                 error_tracks.add(track)
@@ -176,15 +199,43 @@ def add_tracks(client: Client, tracks: tp.List[Track], playlist_name=None, like=
     return error_tracks
 
 
-def dump_error_tracks(tracks: tp.List[Track], file='errors.csv'):
+def get_diff_tracks(t1: pd.DataFrame, t2: pd.DataFrame):
+    return t1[~(t1.title.str.lower().isin(t2.title.str.lower()) & t1.artist.str.lower().isin(t2.artist.str.lower()))]
+
+
+def get_track_from_pd(d: pd.DataFrame, track: Track) -> tp.Union[Track, None]:
+    match = d[(d.artist.str.lower() == track.artist.lower()) & (d.title.str.lower() == track.title.lower())]
+    if not match.empty:
+        return Track.from_pd(match.iloc[0])
+    return None
+
+
+def load_found_tracks(file='search.csv'):
+    if os.path.exists(file):
+        return pd.read_csv(file)
+    return pd.DataFrame(columns=['artist', 'title', 'id', 'album_id'])
+
+
+def dump_track(track: Track, file='search.csv'):
+    if not os.path.exists(file):
+        with open(file, 'w') as f:
+            f.write('artist,title,id,album_id\n')
+    with open(file, 'a') as f:
+        f.write(f'"{track.artist}","{track.title}","{track.id}","{track.album_id}"\n')
+
+
+def dump_tracks(tracks: tp.List[Track], file='errors.csv'):
+    if not tracks:
+        return
     with open(file, 'w') as f:
-        f.write('artist,title\n')
-        for t in tracks:
-            artists = ', '.join(a.name for a in t.artists)
-            f.write(f'"{artists}","{t.title}"\n')
+        f.write('artist,title,id,album_id\n')
+        for track in tracks:
+            f.write(f'"{track.artist}","{track.title}","{track.id}","{track.album_id}"\n')
 
 
-def dump_not_found_tracks(tracks: tp.List[pd.DataFrame], file='not_found.csv'):
+def dump_not_found_tracks(tracks: tp.List[Track], file='not_found.csv'):
+    if not tracks:
+        return
     with open(file, 'w') as f:
         f.write('artist,title\n')
         for t in tracks:
@@ -220,7 +271,7 @@ def main():
     ya = get_tracks_from_playlist(client, playlist_name=args.playlist)
 
     # Get difference between dump tracks and playlist
-    new_tracks = vk[~(vk.title.str.lower().isin(ya.title.str.lower()) & vk.artist.str.lower().isin(ya.artist.str.lower()))]
+    new_tracks = get_diff_tracks(vk, ya)
 
     echo(f"{color.c('Dump tracks:')} {len(vk)}")
     echo(f"{color.c('Tracks in playlist ' + args.playlist)}: {len(ya)}")
@@ -229,12 +280,19 @@ def main():
     # Search tracks at Yandex.Music
     not_found = []
     tracks_to_add = []
+    found = load_found_tracks(file='search.csv')
     for _, t in tqdm(new_tracks.iterrows(), desc=color.y('Searching Yandex.Music'), total=len(new_tracks)):
-        track = search_track(client, t.artist, t.title, prompt=args.prompt)
-        if track is None:
-            not_found.append(t)
+        track = get_track_from_pd(found, Track.from_pd(t))
+        if track:
+            tracks_to_add.append(track)
             continue
-        tracks_to_add.append(track)
+        ya_track = search_track(client, t.artist, t.title, prompt=args.prompt)
+        if ya_track:
+            track = Track.from_ya(ya_track)
+            dump_track(track, file='search.csv')
+            tracks_to_add.append(track)
+            continue
+        not_found.append(Track.from_pd(t))
 
     # Add tracks to Yandex.Music playlist
     error_tracks = add_tracks(client, tracks_to_add, playlist_name=args.playlist, like=args.like, reversed_order=args.reverse)
@@ -244,7 +302,7 @@ def main():
         remove_playlist_duplicates(client, playlist_name=args.playlist)
 
     dump_not_found_tracks(not_found)
-    dump_error_tracks(error_tracks)
+    dump_tracks(error_tracks, file='errors.csv')
 
     echo.c('-'*20)
     echo(f"{color.c('Imported tracks:')} {len(tracks_to_add) - len(error_tracks)}")
