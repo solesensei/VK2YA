@@ -52,20 +52,20 @@ def load_dump_tracks(path):
     return vk.drop_duplicates()
 
 
-def search_track(client: Client, artist: str, title: str, prompt=False) -> tp.Union[None, YaTrack]:
+def search_track(client: Client, artist: str, title: str, prompt=False) -> tp.Union[None, Track]:
 
     def _search(text, results):
         search = client.search(text)
         if search.best and search.best.type == 'track':
             result = search.best.result
             if result.title.lower() == title.lower() and any(artist.lower() == a.name.lower() for a in result.artists):
-                return result
-            results.append(result)
+                return Track.from_ya(result)
+            results.append(Track.from_ya(result))
         if search.tracks:
             for i, result in enumerate(search.tracks.results):
                 if result.title.lower() == title.lower() and any(artist.lower() == a.name.lower() for a in result.artists):
-                    return result
-                results.append(result)
+                    return Track.from_ya(result)
+                results.append(Track.from_ya(result))
                 if i == 4:
                     break
         return None
@@ -76,7 +76,7 @@ def search_track(client: Client, artist: str, title: str, prompt=False) -> tp.Un
         r = _search(f'{artist} {title}', results)
     if r is None and prompt:
         for i, r in enumerate(results):
-            echo(f"{i}. {', '.join(a.name for a in r.artists)} - {r.title}")
+            echo(f'{i}. {r.artist} - {r.title}')
         a = input(color.y('{} - {} [1/n] defaul: n '.format(artist, title)))
         if not a or not a.isdigit():
             return None
