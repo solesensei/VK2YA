@@ -31,6 +31,12 @@ class Track:
     def from_pd(cls, track: pd.Series):
         return cls(track.artist, track.title, track.get('id'), track.get('album_id'))
 
+    def dumps(self) -> str:
+        s = f'"{self.artist}","{self.title}"'
+        if self.id is not None:
+            s += f',"{self.id}","{self.album_id}"'
+        return s + '\n'
+
 
 def usage():
     parser = argparse.ArgumentParser()
@@ -40,6 +46,7 @@ def usage():
     parser.add_argument('--playlist', help='playlist name to create', default='VK2YA')
     parser.add_argument('--clear', help='clear playlist before import', action='store_true')
     parser.add_argument('--reverse', help='insert tracks in reversed order', action='store_true')
+    parser.add_argument('--resume', help='skip not found tracks, default: search again', action='store_true')
     parser.add_argument('--no-clear-duplicates', help='do not remove duplicates tracks from playlist', action='store_true')
     parser.add_argument('--prompt', help='manual select multiple choices tracks', action='store_true')
     return parser.parse_args()
@@ -47,9 +54,9 @@ def usage():
 
 def load_dump_tracks(path):
     echo.c(f'Load dump: ./{path}')
-    vk = pd.read_csv(path, usecols=[0, 1])
+    vk = pd.read_csv(path, usecols=[0, 1]).drop_duplicates()
     vk.columns = ['artist', 'title']
-    return vk.drop_duplicates()
+    return vk
 
 
 def search_track(client: Client, artist: str, title: str, prompt=False) -> tp.Union[None, Track]:
@@ -163,6 +170,7 @@ def create_playlist(client: Client, name='VK2YA') -> Playlist:
 def get_ya_music_client(user=None) -> Client:
     login = user or input(color.y('Yandex login: '))
     password = getpass(color.y('Password / One time password (from Yandex.Key): '))
+    echo.y('logging...', end='\r')
     return Client.from_credentials(login, password)
 
 
@@ -203,43 +211,33 @@ def get_diff_tracks(t1: pd.DataFrame, t2: pd.DataFrame):
     return t1[~(t1.title.str.lower().isin(t2.title.str.lower()) & t1.artist.str.lower().isin(t2.artist.str.lower()))]
 
 
-def get_track_from_pd(d: pd.DataFrame, track: Track) -> tp.Union[Track, None]:
-    match = d[(d.artist.str.lower() == track.artist.lower()) & (d.title.str.lower() == track.title.lower())]
-    if not match.empty:
-        return Track.from_pd(match.iloc[0])
+def get_track_from_list(tracks: tp.List[Track], track: Track) -> tp.Union[Track, None]:
+    for t in tracks:
+        if t.artist.lower() == track.artist.lower() and t.title.lower() == track.title.lower():
+            return t
     return None
 
 
-def load_found_tracks(file='search.csv'):
+def load_tracks(file='search.csv') -> tp.List[Track]:
     if os.path.exists(file):
-        return pd.read_csv(file)
-    return pd.DataFrame(columns=['artist', 'title', 'id', 'album_id'])
+        echo.c(f'Load tracks from: ./{file}')
+        return [Track.from_pd(r) for _, r in pd.read_csv(file).drop_duplicates().iterrows()]
+    return set()
 
 
-def dump_track(track: Track, file='search.csv'):
+def dump_tracks(tracks: tp.List[Track], file='errors.csv', replace=False):
+    if not tracks:
+        return
     if not os.path.exists(file):
+        replace = False
         with open(file, 'w') as f:
-            f.write('artist,title,id,album_id\n')
-    with open(file, 'a') as f:
-        f.write(f'"{track.artist}","{track.title}","{track.id}","{track.album_id}"\n')
-
-
-def dump_tracks(tracks: tp.List[Track], file='errors.csv'):
-    if not tracks:
-        return
-    with open(file, 'w') as f:
-        f.write('artist,title,id,album_id\n')
+            if tracks[0].id is None:
+                f.write('artist,title\n')
+            else:
+                f.write('artist,title,id,album_id\n')
+    with open(file, 'w' if replace else 'a') as f:
         for track in tracks:
-            f.write(f'"{track.artist}","{track.title}","{track.id}","{track.album_id}"\n')
-
-
-def dump_not_found_tracks(tracks: tp.List[Track], file='not_found.csv'):
-    if not tracks:
-        return
-    with open(file, 'w') as f:
-        f.write('artist,title\n')
-        for t in tracks:
-            f.write(f'"{t.artist}","{t.title}"\n')
+            f.write(track.dumps())
 
 
 def main():
@@ -279,20 +277,25 @@ def main():
 
     # Search tracks at Yandex.Music
     not_found = []
+    if args.resume:
+        not_found = load_tracks(file='not_found.csv')
     tracks_to_add = []
-    found = load_found_tracks(file='search.csv')
+    found = load_tracks(file='search.csv')
     for _, t in tqdm(new_tracks.iterrows(), desc=color.y('Searching Yandex.Music'), total=len(new_tracks)):
-        track = get_track_from_pd(found, Track.from_pd(t))
+        s_track = Track.from_pd(t)
+        track = get_track_from_list(found, s_track)
         if track:
             tracks_to_add.append(track)
             continue
-        ya_track = search_track(client, t.artist, t.title, prompt=args.prompt)
-        if ya_track:
-            track = Track.from_ya(ya_track)
-            dump_track(track, file='search.csv')
+        if args.resume and get_track_from_list(not_found, s_track):
+            continue
+        track = search_track(client, s_track.artist, s_track.title, prompt=args.prompt)
+        if track:
+            dump_tracks([track], file='search.csv')
             tracks_to_add.append(track)
             continue
-        not_found.append(Track.from_pd(t))
+        dump_tracks([s_track], file='not_found.csv')
+        not_found.append(s_track)
 
     # Add tracks to Yandex.Music playlist
     error_tracks = add_tracks(client, tracks_to_add, playlist_name=args.playlist, like=args.like, reversed_order=args.reverse)
@@ -301,8 +304,7 @@ def main():
     if not args.no_clear_duplicates:
         remove_playlist_duplicates(client, playlist_name=args.playlist)
 
-    dump_not_found_tracks(not_found)
-    dump_tracks(error_tracks, file='errors.csv')
+    dump_tracks(error_tracks, file='errors.csv', replace=True)
 
     echo.c('-'*20)
     echo(f"{color.c('Imported tracks:')} {len(tracks_to_add) - len(error_tracks)}")

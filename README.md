@@ -25,4 +25,6 @@ python main.py --file dump.csv --playlist VK2YA
 # import tracks from dump.csv to playlist VK2YA and like them
 python main.py --file dump.csv -u <yandex-login> --like
 
+# resume importing, skip not found tracks and already imported tracks
+python main.py --file dump.csv -u <yandex-login> --resume
 ```
