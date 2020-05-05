@@ -281,21 +281,28 @@ def main():
         not_found = load_tracks(file='not_found.csv')
     tracks_to_add = []
     found = load_tracks(file='search.csv')
-    for _, t in tqdm(new_tracks.iterrows(), desc=color.y('Searching Yandex.Music'), total=len(new_tracks)):
-        s_track = Track.from_pd(t)
-        track = get_track_from_list(found, s_track)
-        if track:
-            tracks_to_add.append(track)
-            continue
-        if args.resume and get_track_from_list(not_found, s_track):
-            continue
-        track = search_track(client, s_track.artist, s_track.title, prompt=args.prompt)
-        if track:
-            dump_tracks([track], file='search.csv')
-            tracks_to_add.append(track)
-            continue
-        dump_tracks([s_track], file='not_found.csv')
-        not_found.append(s_track)
+    try:
+        for _, t in tqdm(new_tracks.iterrows(), desc=color.y('Searching Yandex.Music'), total=len(new_tracks)):
+            s_track = Track.from_pd(t)
+            track = get_track_from_list(found, s_track)
+            if track:
+                tracks_to_add.append(track)
+                continue
+            if args.resume and get_track_from_list(not_found, s_track):
+                continue
+            track = search_track(client, s_track.artist, s_track.title, prompt=args.prompt)
+            if track:
+                dump_tracks([track], file='search.csv')
+                tracks_to_add.append(track)
+                continue
+            dump_tracks([s_track], file='not_found.csv')
+            not_found.append(s_track)
+    except KeyboardInterrupt:
+        input(
+            color.r('Stop searching...\n') + \
+            color.g('Start importing?\n') + \
+            f'Press {color.r("[ctrl+c]")} again to abort, {color.g("[enter]")} to continue'
+        )
 
     # Add tracks to Yandex.Music playlist
     error_tracks = add_tracks(client, tracks_to_add, playlist_name=args.playlist, like=args.like, reversed_order=args.reverse)
