@@ -220,7 +220,7 @@ def get_track_from_list(tracks: tp.List[Track], track: Track) -> tp.Union[Track,
 
 def load_tracks(file='search.csv') -> tp.List[Track]:
     if os.path.exists(file):
-        echo.c(f'Load tracks from: ./{file}')
+        echo.c(f'Load tracks: ./{file}')
         return [Track.from_pd(r) for _, r in pd.read_csv(file).drop_duplicates().iterrows()]
     return set()
 
