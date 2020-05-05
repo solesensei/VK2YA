@@ -5,6 +5,9 @@ Simple script to transfer VK Music to Yandex.Music.
 It works with [VKMP](https://github.com/solesensei/VKMP) music collector, written by [@BpArCuCTeMbI](https://github.com/BpArCuCTeMbI/VKMP).
 
 You can also use any **CSV dump** as input in the following format: `artist,title`. 
+## Requirements
+
+- Python 3.7
 
 ## Setup
 
